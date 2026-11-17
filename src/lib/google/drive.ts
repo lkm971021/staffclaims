@@ -20,6 +20,14 @@ export interface DriveAdapter {
   upload(folderId: string, name: string, mime: string, data: Buffer, appKey: string): Promise<string>;
   /** Replace the content of an existing file (Drive keeps revision history). */
   updateContent(fileId: string, mime: string, data: Buffer): Promise<void>;
+  /** Download a file's bytes. */
+  download(fileId: string): Promise<Buffer>;
+  /** Move (and rename) a file into another folder. Returns the file id (unchanged on live Drive). */
+  move(fileId: string, folderId: string, name: string): Promise<string>;
+  /** Files directly inside a folder (only files this app created are visible). */
+  list(folderId: string): Promise<{ id: string; name: string; createdTime: string }[]>;
+  /** Move a file to the Drive bin (recoverable for 30 days). */
+  trash(fileId: string): Promise<void>;
   folderUrl(id: string): string;
 }
 
@@ -87,6 +95,39 @@ class LiveDrive implements DriveAdapter {
     await this.d.files.update({ fileId, media: { mimeType: mime, body: Readable.from(data) } });
   }
 
+  async download(fileId: string) {
+    const r = await this.d.files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" });
+    return Buffer.from(r.data as ArrayBuffer);
+  }
+
+  async move(fileId: string, folderId: string, name: string) {
+    const f = await this.d.files.get({ fileId, fields: "parents" });
+    const from = (f.data.parents ?? []).filter((p) => p !== folderId).join(",");
+    await this.d.files.update({ fileId, addParents: folderId, removeParents: from || undefined, requestBody: { name: clean(name) }, fields: "id" });
+    return fileId;
+  }
+
+  async list(folderId: string) {
+    const out: { id: string; name: string; createdTime: string }[] = [];
+    let pageToken: string | undefined;
+    do {
+      const r = await this.d.files.list({
+        q: `'${q(folderId)}' in parents and trashed = false`,
+        fields: "nextPageToken, files(id, name, createdTime)",
+        spaces: "drive",
+        pageSize: 1000,
+        pageToken,
+      });
+      for (const f of r.data.files ?? []) out.push({ id: f.id!, name: f.name ?? "", createdTime: f.createdTime ?? "" });
+      pageToken = r.data.nextPageToken ?? undefined;
+    } while (pageToken);
+    return out;
+  }
+
+  async trash(fileId: string) {
+    await this.d.files.update({ fileId, requestBody: { trashed: true } });
+  }
+
   folderUrl(id: string) {
     return `https://drive.google.com/drive/folders/${id}`;
   }
@@ -124,6 +165,39 @@ class MockDrive implements DriveAdapter {
   }
   async updateContent(fileId: string, _mime: string, data: Buffer) {
     await fs.writeFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ MOCK_ROOT, fileId.replace(/^mock:/, "")), data);
+  }
+  async download(fileId: string) {
+    return fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ MOCK_ROOT, fileId.replace(/^mock:/, "")));
+  }
+  async move(fileId: string, folderId: string, name: string) {
+    const from = path.join(/*turbopackIgnore: true*/ MOCK_ROOT, fileId.replace(/^mock:/, ""));
+    const dir = this.dirOf(folderId);
+    await fs.mkdir(/*turbopackIgnore: true*/ dir, { recursive: true });
+    let to = path.join(/*turbopackIgnore: true*/ dir, clean(name));
+    if (to !== from) {
+      try {
+        await fs.access(/*turbopackIgnore: true*/ to);
+        to = path.join(/*turbopackIgnore: true*/ dir, `${Date.now()}-${clean(name)}`); // mimic Drive allowing same names
+      } catch {
+        /* free */
+      }
+      await fs.rename(/*turbopackIgnore: true*/ from, to);
+    }
+    return `mock:${path.relative(MOCK_ROOT, to)}`;
+  }
+  async list(folderId: string) {
+    const dir = this.dirOf(folderId);
+    const names = await fs.readdir(/*turbopackIgnore: true*/ dir).catch(() => [] as string[]);
+    const out: { id: string; name: string; createdTime: string }[] = [];
+    for (const n of names) {
+      if (n.startsWith(".")) continue;
+      const st = await fs.stat(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ dir, n));
+      if (st.isFile()) out.push({ id: `mock:${path.relative(MOCK_ROOT, path.join(dir, n))}`, name: n, createdTime: st.birthtime.toISOString() });
+    }
+    return out;
+  }
+  async trash(fileId: string) {
+    await fs.rm(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ MOCK_ROOT, fileId.replace(/^mock:/, "")), { force: true });
   }
   folderUrl(id: string) {
     return `mock://${id.replace(/^mock:/, "")}`;

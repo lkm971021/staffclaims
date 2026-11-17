@@ -10,3 +10,5 @@ test-results/
 playwright-report/
 .test-storage/
 .test-mock-drive/
+.test-mock-drive-ds/
+.test-storage-ds/

@@ -21,8 +21,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const data = Buffer.from(await f.arrayBuffer());
   const t = await sniff(data);
   if (!t || data.length > 15 * 1024 * 1024) return NextResponse.json({ error: "Upload a PDF or image up to 15 MB." }, { status: 400 });
-  const key = newKey(`batch-${b.id}`, t.ext);
-  await putFile(key, data);
+  const key = await putFile(newKey(`batch-${b.id}`, t.ext), data, safeFilename(`${b.ref} - payment proof${t.ext}`));
   await prisma.paymentBatch.update({ where: { id }, data: { proofDocKey: key, proofDocName: safeFilename(`${b.ref} - payment proof${t.ext}`) } });
   await audit(prisma, { id: u.id, name: u.name }, "PaymentBatch", id, "UPLOAD_PROOF", undefined, { filename: f.name, sizeBytes: data.length });
   return NextResponse.json({ ok: true });
@@ -34,6 +33,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const b = await prisma.paymentBatch.findUnique({ where: { id } });
   if (!b?.proofDocKey) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const ext = b.proofDocKey.split(".").pop();
+  const ext = (b.proofDocName ?? b.proofDocKey).split(".").pop()?.toLowerCase();
   return fileResponse(await getFile(b.proofDocKey), ext === "pdf" ? "application/pdf" : "image/jpeg", b.proofDocName ?? "proof", false);
 }

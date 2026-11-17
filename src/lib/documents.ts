@@ -49,8 +49,7 @@ export async function addLineDocuments(u: SessionUser, claimId: string, lineId: 
       created.push(dup.id);
       continue;
     }
-    const key = newKey(claimId, t.ext);
-    await putFile(key, f.data);
+    const key = await putFile(newKey(claimId, t.ext), f.data, safeFilename(f.name || `receipt${t.ext}`));
     const phash = t.kind === "image" ? await dHash(f.data) : null;
     const doc = await prisma.document.create({
       data: {
@@ -62,8 +61,7 @@ export async function addLineDocuments(u: SessionUser, claimId: string, lineId: 
     if (f.enhanced && t.kind === "image") {
       const et = await sniff(f.enhanced);
       if (et?.kind === "image" && f.enhanced.length <= maxBytes) {
-        const ekey = newKey(claimId, et.ext);
-        await putFile(ekey, f.enhanced);
+        const ekey = await putFile(newKey(claimId, et.ext), f.enhanced, safeFilename(`enhanced-${f.name || "receipt"}`));
         await prisma.document.create({
           data: {
             claimId, lineId, kind: "ENHANCED", version: claim.version, derivedFromId: doc.id, pageOrder: doc.pageOrder,

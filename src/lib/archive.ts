@@ -6,7 +6,7 @@ import { getSheets, type SheetsAdapter } from "./google/sheets";
 import { claimInclude, claimRow, registerRows, REGISTER_COLUMNS, CLAIM_COLUMNS } from "./listing";
 import { claimSummaryPdf, auditTrailPdf } from "./pdf/summary";
 import { combineToPdf, type CombineItem } from "./pdf/combine";
-import { getFile, newKey, putFile } from "./storage";
+import { driveIdOf, forget, getFile, isDriveKey, newKey, putFile, storageBackend } from "./storage";
 import { toJpeg } from "./files";
 import { sha256 } from "./crypto";
 import { getSettings, setSetting } from "./settings";
@@ -61,9 +61,19 @@ function docFolder(d: Document): string {
   }
 }
 
+/** Put a stored document into a Drive folder: move it when it already lives in Drive storage, else upload a copy. */
+async function place(drive: DriveAdapter, d: { id: string; storageKey: string; mime: string }, folderId: string, name: string) {
+  if (isDriveKey(d.storageKey) && storageBackend() === "drive") {
+    const id = await drive.move(driveIdOf(d.storageKey), folderId, name);
+    forget(d.storageKey);
+    return { id, storageKey: `drive:${id}` };
+  }
+  const id = await drive.upload(folderId, name, d.mime, await getFile(d.storageKey), d.id);
+  return { id, storageKey: d.storageKey };
+}
+
 async function storeGenerated(claimId: string, kind: Document["kind"], version: number, filename: string, data: Buffer) {
-  const key = newKey(claimId, ".pdf");
-  await putFile(key, data);
+  const key = await putFile(newKey(claimId, ".pdf"), data, filename);
   return prisma.document.create({
     data: { claimId, kind, version, filename, mime: "application/pdf", sizeBytes: data.length, sha256: sha256(data), storageKey: key, uploadedById: SYSTEM_USER },
   });
@@ -137,18 +147,20 @@ export async function archiveClaim(claimId: string) {
   for (const sub of Object.values(SUBFOLDERS)) folderIds[sub] = await drive.ensurePath(claimFolder, sub.split("/"));
   await prisma.claim.update({ where: { id: claimId }, data: { driveFolderId: claimFolder, driveFolderUrl: drive.folderUrl(claimFolder) } });
 
-  // 3. Upload every document not yet uploaded (originals are never altered; superseded ones are kept)
+  // 3. Put every document into its archive folder (originals are never altered; superseded ones are kept).
+  //    Local storage: upload a copy. Drive storage: MOVE the stored file (no duplicate copies in Drive).
   const lineNo = new Map(c.lines.map((l) => [l.id, l.lineNo]));
   const all = await prisma.document.findMany({ where: { claimId, removedAt: null }, orderBy: { uploadedAt: "asc" } });
+  const sameMode = (id: string | null) => Boolean(id) && id!.startsWith("mock:") === (drive.mode === "mock");
   let failures = 0;
   for (const d of all) {
-    if (d.driveStatus === "UPLOADED" && d.driveFileId && d.driveFileId.startsWith("mock:") === (drive.mode === "mock")) continue;
+    if (d.driveStatus === "UPLOADED" && sameMode(d.driveFileId)) continue;
     if (d.kind === "APPROVAL_RECORD") continue;
     const prefix = d.lineId ? `L${String(lineNo.get(d.lineId) ?? 0).padStart(2, "0")}-` : "";
     const name = `${d.supersededAt ? "SUPERSEDED-" : ""}${prefix}${d.filename}`;
     try {
-      const id = await drive.upload(folderIds[docFolder(d)], name, d.mime, await getFile(d.storageKey), d.id);
-      await prisma.document.update({ where: { id: d.id }, data: { driveFileId: id, driveStatus: "UPLOADED", driveError: null } });
+      const placed = await place(drive, d, folderIds[docFolder(d)], name);
+      await prisma.document.update({ where: { id: d.id }, data: { driveFileId: placed.id, storageKey: placed.storageKey, driveStatus: "UPLOADED", driveError: null } });
     } catch (e) {
       failures++;
       await prisma.document.update({ where: { id: d.id }, data: { driveStatus: "FAILED", driveError: String((e as Error).message).slice(0, 500) } });
@@ -158,18 +170,22 @@ export async function archiveClaim(claimId: string) {
   // 4. Audit trail: one file, content refreshed each time (Drive keeps the revision history)
   try {
     let rec = await prisma.document.findFirst({ where: { claimId, kind: "APPROVAL_RECORD" } });
-    if (!rec) rec = await storeGenerated(claimId, "APPROVAL_RECORD", c.version, `${c.ref} - Audit Trail.pdf`, trail);
-    else {
-      // keep the local copy current too (used by downloads / ZIP); earlier copies stay on disk
-      const key = newKey(claimId, ".pdf");
-      await putFile(key, trail);
-      rec = await prisma.document.update({ where: { id: rec.id }, data: { storageKey: key, sizeBytes: trail.length, sha256: sha256(trail) } });
-    }
-    if (rec.driveFileId && rec.driveFileId.startsWith("mock:") === (drive.mode === "mock")) await drive.updateContent(rec.driveFileId, "application/pdf", trail);
-    else {
-      const id = await drive.upload(folderIds[SUBFOLDERS.approval], rec.filename, "application/pdf", trail, rec.id);
-      await drive.updateContent(id, "application/pdf", trail);
-      await prisma.document.update({ where: { id: rec.id }, data: { driveFileId: id, driveStatus: "UPLOADED" } });
+    const meta = { sizeBytes: trail.length, sha256: sha256(trail) };
+    if (rec && sameMode(rec.driveFileId)) {
+      await drive.updateContent(rec.driveFileId!, "application/pdf", trail);
+      if (storageBackend() === "drive") {
+        forget(rec.storageKey);
+        await prisma.document.update({ where: { id: rec.id }, data: { storageKey: `drive:${rec.driveFileId}`, ...meta } });
+      } else {
+        // keep the local copy current too (used by downloads / ZIP); earlier copies stay on disk
+        await prisma.document.update({ where: { id: rec.id }, data: { storageKey: await putFile(newKey(claimId, ".pdf"), trail, rec.filename), ...meta } });
+      }
+    } else {
+      if (!rec) rec = await storeGenerated(claimId, "APPROVAL_RECORD", c.version, `${c.ref} - Audit Trail.pdf`, trail);
+      else rec = await prisma.document.update({ where: { id: rec.id }, data: { storageKey: await putFile(newKey(claimId, ".pdf"), trail, rec.filename), ...meta } });
+      const placed = await place(drive, rec, folderIds[SUBFOLDERS.approval], rec.filename);
+      await drive.updateContent(placed.id, "application/pdf", trail);
+      await prisma.document.update({ where: { id: rec.id }, data: { driveFileId: placed.id, storageKey: placed.storageKey, driveStatus: "UPLOADED" } });
     }
   } catch (e) {
     failures++;
@@ -294,6 +310,7 @@ export async function syncBatch(batchId: string) {
       const drive = await getDrive();
       const root = await companyRoot(drive, b.company, false);
       const folder = await drive.ensurePath(root, ["PAYMENTS", b.ref.slice(4, 8), b.ref]);
+      // copied (not moved): the posted batch's proof key is locked by the database
       const fid = await drive.upload(folder, b.proofDocName ?? `${b.ref} - payment proof`, "application/octet-stream", await getFile(b.proofDocKey), `proof-${b.id}`);
       await prisma.paymentBatch.update({ where: { id: b.id }, data: { proofDriveFileId: fid } });
     }
