@@ -9,7 +9,6 @@ const securityHeaders = [
 ];
 
 const config: NextConfig = {
-  output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["sharp", "@prisma/client", "googleapis", "exceljs", "archiver"],
   experimental: { serverActions: { bodySizeLimit: "30mb" } },

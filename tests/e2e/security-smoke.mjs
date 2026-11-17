@@ -18,7 +18,8 @@ const get = async (ctx, path) => { const r = await ctx.request.get(BASE + path, 
 // find Alice's claim + document ids via Finance
 const fin = await as("finance@example.test");
 const fp = await fin.newPage(); await fp.goto(`${BASE}/finance/claims`);
-const claimHref = await fp.getAttribute("table a >> nth=0", "href");
+// Alice's claim (the "other staff" checks below use Ben, so it must not be Ben's own claim)
+const claimHref = await fp.getAttribute("tr:has-text('DEMO STAFF ALICE') a >> nth=0", "href");
 const claimId = claimHref.split("/").pop();
 await fp.goto(BASE + claimHref);
 const docSrc = await fp.getAttribute("img[src^='/api/documents/']", "src").catch(() => null);

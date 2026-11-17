@@ -29,6 +29,9 @@ Every claim is filed automatically to **Google Drive** and listed in a **Google 
 | **Google Drive archive and Google Sheets Master Listing** | Built and fully tested in **MOCK mode** (local folder + local `.xlsx`). **Live Google not yet tested.** It needs your Google Cloud OAuth client; see `docs/GOOGLE_SETUP.md`. |
 | **Receipt OCR (Claude vision)** | Built. **Not tested live.** Needs `ANTHROPIC_API_KEY`. Without a key, OCR switches off and the form works normally. |
 | Google sign-in | Built. **Not tested live.** Needs an OAuth client. Email + password sign-in is tested. |
+| **Google Drive as the main file store** (`STORAGE_BACKEND=drive`, for Cloud Run) | Built and tested against the mock Drive: uploads go to Drive, are moved (not copied) on archive, and the app refuses to store files if Google is not connected. **Not yet run against live Drive.** |
+| Daily database backup to Drive, plus restore script | Built and tested: backup, then restore into a new database, then all tables compared |
+| Google Cloud Run deployment (`deploy/gcp/deploy.sh`) | Written and syntax-checked. **Not yet run against a real Google Cloud project.** |
 
 The app shows a **MOCK MODE** banner to Finance and Admin until Google is connected.
 
@@ -66,7 +69,8 @@ node tests/e2e/security-smoke.mjs      # 44 access-control & smoke checks
 |---|---|
 | `docs/PHASE1_ANALYSIS.md` | Template analysis, architecture, schema, permissions, workflow, open business rules |
 | `docs/GOOGLE_SETUP.md` | Google Cloud, OAuth, Drive and Sheets connection (step by step) |
-| `docs/DEPLOYMENT.md` | Hosting options, environment variables, backups, updates |
+| `docs/DEPLOY_GOOGLE_CLOUD.md` | **Chosen hosting:** Cloud Run + Neon + Google Drive storage, step by step |
+| `docs/DEPLOYMENT.md` | Other hosting options, environment variables, backups, updates |
 | `docs/ADMIN_GUIDE.md` | First admin, adding staff, team leaders, categories, deadlines, e-Invoice settings |
 | `docs/STAFF_GUIDE.md` | How staff submit claims on their phone |
 | `docs/FINANCE_GUIDE.md` | Verification, duplicates, payments, reports, month-end |

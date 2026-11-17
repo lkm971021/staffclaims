@@ -221,7 +221,7 @@ export async function backupNowAction() {
   } catch (e) {
     back("/admin/google", `Backup failed: ${(e as Error).message}`, false);
   }
-  back("/admin/google", msg);
+  back("/admin/google", msg, !msg.startsWith("Backup skipped"));
 }
 
 export async function disconnectGoogleAction() {

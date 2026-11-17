@@ -21,7 +21,11 @@ The app is two processes plus a PostgreSQL database and a persistent folder for 
 
 Typical cost: about USD 10–25 per month.
 
-## Option B: Google Cloud Run + Cloud SQL
+## Option B (chosen): Google Cloud Run + Neon + Google Drive file storage
+
+See **`docs/DEPLOY_GOOGLE_CLOUD.md`** for the full step-by-step guide and the `deploy/gcp/deploy.sh` script.
+
+## Option B2: Google Cloud Run + Cloud SQL
 
 - Build the Dockerfile and deploy to Cloud Run (region `asia-southeast1`).
 - Use Cloud SQL Postgres, connected via the Cloud SQL connector.

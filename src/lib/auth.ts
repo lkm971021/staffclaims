@@ -10,7 +10,10 @@ const LOCK_MINUTES = 15;
 let _dummy: string | null = null;
 const dummyHash = () => (_dummy ??= bcrypt.hashSync("not-a-real-password", 12));
 
-export const googleLoginEnabled = Boolean(process.env.GOOGLE_LOGIN_CLIENT_ID && process.env.GOOGLE_LOGIN_CLIENT_SECRET);
+// Staff Google sign-in uses GOOGLE_LOGIN_CLIENT_* if set, otherwise the same OAuth client as Drive (GOOGLE_CLIENT_*).
+const LOGIN_ID = process.env.GOOGLE_LOGIN_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+const LOGIN_SECRET = process.env.GOOGLE_LOGIN_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+export const googleLoginEnabled = Boolean(LOGIN_ID && LOGIN_SECRET && process.env.GOOGLE_SIGNIN !== "off");
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt", maxAge: 12 * 60 * 60 }, // 12 hours
@@ -50,8 +53,8 @@ export const authOptions: NextAuthOptions = {
     ...(googleLoginEnabled
       ? [
           GoogleProvider({
-            clientId: process.env.GOOGLE_LOGIN_CLIENT_ID!,
-            clientSecret: process.env.GOOGLE_LOGIN_CLIENT_SECRET!,
+            clientId: LOGIN_ID!,
+            clientSecret: LOGIN_SECRET!,
             authorization: { params: { prompt: "select_account", scope: "openid email profile" } },
           }),
         ]

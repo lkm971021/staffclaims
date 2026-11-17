@@ -1,0 +1,13 @@
+# Files never uploaded to Google Cloud Build
+.git
+.gitignore
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
+storage/
+mock-drive/
+.test-*
+test-results/
+playwright-report/
