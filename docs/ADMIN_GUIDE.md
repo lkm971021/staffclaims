@@ -3,7 +3,7 @@
 ## First-time setup checklist
 
 1. Deploy the app (`DEPLOYMENT.md`) and create your admin account with `npm run create-admin`.
-2. **Admin → Companies & branches**: check both companies and the 4 branches. Add **SK ARENA** under the right company if staff claim for it. (It appears in the Petty Cash SOP but not in the claim template; this was still to be confirmed.)
+2. **Admin → Companies & branches**: check both companies and the 5 branches (SK ARENA is branch 5, under Plan B Physio Sdn. Bhd.).
 3. **Admin → Expense categories**: the 35 categories from your template are loaded. For each one used, set:
    - the **SQL Accounting GL code**
    - whether a receipt, business purpose or location is required

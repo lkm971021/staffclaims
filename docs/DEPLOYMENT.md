@@ -41,6 +41,31 @@ Put Caddy or nginx in front of port 3000 for HTTPS.
 
 > The Dockerfile and compose file were written but **not built in the development environment** (no Docker daemon was available). Build them once on your host and check `docker compose logs`.
 
+## Option D: free hosting (Oracle Cloud Always Free VM)
+
+This is the only free option that meets all of the app's needs: a persistent disk for files, a database, and an always-on worker. It is Option C (`docker compose`) on a free virtual machine.
+
+1. Sign up at oracle.com/cloud/free. A payment card is needed for identity checks. Choose the **Singapore** home region; it cannot be changed later.
+2. Create an **Ampere A1** instance (Ubuntu) within the Always Free limit. As of Oct 2026 that is **2 OCPU / 12 GB RAM**, with up to 200 GB of disk shared by all volumes.
+3. Install Docker, then follow Option C. Point a domain or free subdomain at the VM's public IP, and use Caddy for automatic HTTPS.
+4. Back up yourself. There are no managed backups. Schedule a nightly database dump (`docker compose exec db pg_dump`) and keep the files volume copied somewhere off the VM.
+
+Caveats:
+- There is no uptime guarantee or support.
+- Oracle has changed the free limits before (it halved them in 2026).
+- Oracle may reclaim Always Free instances it considers idle.
+
+Keep the paid options in mind once the app is business-critical.
+
+**Free options considered and rejected:**
+
+| Option | Why not |
+|---|---|
+| Render free | Web service sleeps after 15 minutes. Free Postgres is deleted 30 days after creation. No backups. No persistent disk |
+| Vercel Hobby | Non-commercial use only. No background worker or disk |
+| Supabase / Neon free | Database only (about 0.5–1 GB). They still need a host for the app and files. Can be combined with Option D if preferred |
+| Google Cloud e2-micro | Only 1 GB RAM, and only in US regions |
+
 ## Environment variables
 
 | Variable | Required | Notes |
