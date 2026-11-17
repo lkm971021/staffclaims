@@ -1,0 +1,511 @@
+// Staff Expense Claim Management System - database schema
+// Money is stored as integer sen (RM 1.00 = 100). Timestamps are UTC; UI shows Asia/Kuala_Lumpur.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STAFF
+  FINANCE
+  DIRECTOR
+  ADMIN
+}
+
+enum ClaimStatus {
+  DRAFT
+  PENDING_FINANCE // "Submitted - Pending Finance Verification"
+  RETURNED // "Returned to Staff"
+  PENDING_DIRECTOR // "Finance Verified - Pending Director Approval"
+  CLARIFICATION // Director requested clarification; back in Finance queue
+  APPROVED_FOR_PAYMENT // "Director Approved - Approved for Payment"
+  PAID
+  REJECTED
+}
+
+enum LineStatus {
+  PENDING
+  VERIFIED
+  QUERIED
+  REJECTED
+}
+
+enum DocKind {
+  ORIGINAL // exactly as uploaded by staff - never altered
+  ENHANCED // cropped / rotated / enhanced derivative
+  COMBINED_PDF // per-line combined supporting PDF
+  CLAIM_SUPPORTING_PDF // whole-claim combined supporting documents
+  CLAIM_SUMMARY // generated claim form PDF
+  ADDITIONAL
+  PAYMENT_PROOF
+  APPROVAL_RECORD // audit trail PDF
+}
+
+enum DriveStatus {
+  NOT_QUEUED
+  PENDING
+  UPLOADED
+  FAILED
+}
+
+enum ArchiveStatus {
+  NOT_STARTED
+  PENDING
+  ARCHIVED
+  FAILED
+}
+
+enum DupRule {
+  FILE_HASH
+  IMAGE_SIMILAR
+  SUPPLIER_INVOICE_NO
+  SUPPLIER_DATE_AMOUNT
+}
+
+enum DupDecision {
+  OPEN
+  NOT_DUPLICATE
+  DUPLICATE
+}
+
+enum BatchStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+model Company {
+  id            String   @id @default(cuid())
+  code          String   @unique // e.g. PBP, PBPS
+  name          String
+  brn           String?
+  tin           String?
+  sstNo         String?
+  address       String?
+  email         String?
+  phone         String?
+  driveRootId   String? // Drive folder under which this company's claim tree is built
+  isHolding     Boolean  @default(false)
+  active        Boolean  @default(true)
+  branches      Branch[]
+  claims        Claim[]
+  batches       PaymentBatch[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Branch {
+  id        String      @id @default(cuid())
+  code      String      @unique
+  name      String      @unique // as used in the template list, e.g. "PJ MIDTOWN"
+  companyId String
+  company   Company     @relation(fields: [companyId], references: [id])
+  isAll     Boolean     @default(false) // the "ALL" allocation (HQ / shared)
+  active    Boolean     @default(true)
+  sortOrder Int         @default(0)
+  users     User[]
+  lines     ClaimLine[]
+}
+
+model User {
+  id             String    @id @default(cuid())
+  employeeNo     String    @unique // existing 5-digit numbering, e.g. "00011"
+  name           String // full name as per NRIC
+  nickName       String?
+  email          String    @unique // lower-case; used for both password and Google sign-in
+  phone          String?
+  nric           String? // PDPA restricted - Finance/Admin/self only
+  tin            String? // PDPA restricted
+  department     String?
+  position       String?
+  branchId       String?
+  branch         Branch?   @relation(fields: [branchId], references: [id])
+  roles          Role[]    @default([STAFF])
+  active         Boolean   @default(true)
+  passwordHash   String?
+  mustChangePassword Boolean @default(false)
+  googleSub      String?   @unique
+  lastLoginAt    DateTime?
+  failedLogins   Int       @default(0)
+  lockedUntil    DateTime?
+  isDemo         Boolean   @default(false) // seeded test account - excluded from real reports
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  claims         Claim[]   @relation("claimant")
+  claimsSubmitted Claim[]  @relation("submitter")
+  leads          TeamDelegation[] @relation("leader")
+  ledBy          TeamDelegation[] @relation("member")
+  notifications  Notification[]
+}
+
+model TeamDelegation {
+  id        String   @id @default(cuid())
+  leaderId  String
+  memberId  String
+  leader    User     @relation("leader", fields: [leaderId], references: [id])
+  member    User     @relation("member", fields: [memberId], references: [id])
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([leaderId, memberId])
+}
+
+model ExpenseCategory {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  glAccountCode       String? // SQL Accounting account code (Finance maintains)
+  glAccountName       String?
+  requiresReceipt     Boolean  @default(true)
+  requiresLocation    Boolean  @default(false) // e.g. PARKING / TOLL / PETROL
+  requiresPurpose     Boolean  @default(true)
+  einvoiceApplicable  Boolean  @default(true)
+  specialApproval     Boolean  @default(false) // flag for Director's special attention
+  warnAboveSen        Int? // soft warning threshold, never a hard limit
+  checklist           Json     @default("[]") // Finance verification checklist items (strings)
+  guidance            String? // shown to staff when choosing the category
+  active              Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  lines               ClaimLine[]
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+model RefCounter {
+  key   String @id // e.g. "CLM-2026-11", "PAY-2026-11"
+  value Int    @default(0)
+}
+
+model Claim {
+  id              String        @id @default(cuid())
+  ref             String        @unique // CLM-2026-11-0001 (supplementary: CLM-2026-11-0001-S1)
+  companyId       String
+  company         Company       @relation(fields: [companyId], references: [id])
+  claimantId      String
+  claimant        User          @relation("claimant", fields: [claimantId], references: [id])
+  submittedById   String?
+  submittedBy     User?         @relation("submitter", fields: [submittedById], references: [id])
+  claimYear       Int
+  claimMonth      Int // 1-12
+  status          ClaimStatus   @default(DRAFT)
+  version         Int           @default(1)
+  advanceSen      Int           @default(0) // advance payment previously given - deducted
+  reimbursementMethod String? // INSTANT TRANSFER (OCBC) etc. (recorded at payment)
+  staffRemarks    String?
+  financeRemarks  String?
+  directorRemarks String?
+  isDirectorOwnClaim Boolean    @default(false)
+  parentClaimId   String?
+  parentClaim     Claim?        @relation("supplementary", fields: [parentClaimId], references: [id])
+  supplementaries Claim[]       @relation("supplementary")
+  firstSubmittedAt DateTime?
+  submittedAt     DateTime?
+  financeVerifiedAt DateTime?
+  financeVerifiedById String?
+  directorDecidedAt DateTime?
+  directorDecidedById String?
+  paidAt          DateTime?
+  rejectedAt      DateTime?
+  archiveStatus   ArchiveStatus @default(NOT_STARTED)
+  driveFolderId   String?
+  driveFolderUrl  String?
+  sheetSyncedAt   DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  lines           ClaimLine[]
+  documents       Document[]
+  versions        ClaimVersion[]
+  events          WorkflowEvent[]
+  paymentItem     PaymentItem?
+  notifications   Notification[]
+
+  @@index([claimantId, claimYear, claimMonth])
+  @@index([status])
+  @@index([claimYear, claimMonth])
+}
+
+model ClaimLine {
+  id                 String     @id @default(cuid())
+  claimId            String
+  claim              Claim      @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  lineNo             Int
+  expenseDate        DateTime   @db.Date
+  categoryId         String
+  category           ExpenseCategory @relation(fields: [categoryId], references: [id])
+  branchId           String
+  branch             Branch     @relation(fields: [branchId], references: [id])
+  supplier           String
+  description        String
+  businessPurpose    String?
+  location           String?
+  receiptNo          String?
+  amountSen          Int // as submitted by staff - never silently changed
+  staffPaymentMethod String     @default("CASH") // CASH / PERSONAL_CARD / E_WALLET / OTHER
+  docIsReceipt       Boolean    @default(true)
+  docIsEinvoice      Boolean    @default(false)
+  // e-Invoice information (shown from effective date; configurable)
+  supplierTin        String?
+  supplierBrn        String?
+  supplierSst        String?
+  invoiceNo          String?
+  invoiceDate        DateTime?  @db.Date
+  einvoiceUuid       String?
+  einvoiceStatus     String? // VALIDATED / NOT_AVAILABLE / PENDING / UNKNOWN
+  remarks            String?
+  // Finance verification
+  finStatus          LineStatus @default(PENDING)
+  verifiedAmountSen  Int?
+  finComment         String?
+  finCheckedById     String?
+  finCheckedAt       DateTime?
+  hardcopyReceivedAt DateTime?
+  hardcopyReceivedBy String?
+  // System checks (OCR mismatch etc.) at submission time
+  warnings           Json       @default("[]")
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  documents          Document[]
+  duplicateFlags     DuplicateFlag[] @relation("flagLine")
+  matchedBy          DuplicateFlag[] @relation("matchedLine")
+  adjustments        Adjustment[]
+
+  @@unique([claimId, lineNo])
+  @@index([supplier, receiptNo])
+  @@index([expenseDate, amountSen])
+}
+
+model Document {
+  id            String      @id @default(cuid())
+  claimId       String
+  claim         Claim       @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  lineId        String?
+  line          ClaimLine?  @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  kind          DocKind
+  version       Int         @default(1) // claim version when created
+  supersededAt  DateTime? // replaced by a newer document (kept for history)
+  removedAt     DateTime? // removed from a DRAFT by staff (kept for history)
+  derivedFromId String? // ENHANCED -> ORIGINAL
+  pageOrder     Int         @default(0)
+  filename      String
+  mime          String
+  sizeBytes     Int
+  sha256        String
+  phash         String? // perceptual hash (images)
+  storageKey    String // path within private storage
+  driveFileId   String?
+  driveStatus   DriveStatus @default(NOT_QUEUED)
+  driveError    String?
+  uploadedById  String
+  uploadedAt    DateTime    @default(now())
+  ocr           OcrResult[]
+
+  @@index([sha256])
+  @@index([claimId, kind])
+}
+
+model OcrResult {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  engine      String // e.g. "claude:claude-opus-5-5"
+  raw         Json // full structured result, never edited
+  supplier    String?
+  supplierBrn String?
+  supplierTin String?
+  supplierSst String?
+  receiptNo   String?
+  docDate     DateTime? @db.Date
+  subtotalSen Int?
+  taxSen      Int?
+  totalSen    Int?
+  currency    String?
+  description String?
+  legible     Boolean?
+  confidence  Float?
+  error       String?
+  createdAt   DateTime @default(now())
+}
+
+model DuplicateFlag {
+  id            String      @id @default(cuid())
+  lineId        String
+  line          ClaimLine   @relation("flagLine", fields: [lineId], references: [id], onDelete: Cascade)
+  matchedLineId String
+  matchedLine   ClaimLine   @relation("matchedLine", fields: [matchedLineId], references: [id], onDelete: Cascade)
+  rule          DupRule
+  score         Float       @default(1)
+  detail        String?
+  decision      DupDecision @default(OPEN)
+  decidedById   String?
+  decidedAt     DateTime?
+  explanation   String?
+  createdAt     DateTime    @default(now())
+
+  @@unique([lineId, matchedLineId, rule])
+}
+
+model ClaimVersion {
+  id        String   @id @default(cuid())
+  claimId   String
+  claim     Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  version   Int
+  snapshot  Json // full claim + lines + document ids at submission
+  totalSen  Int
+  reason    String?
+  createdById String
+  createdAt DateTime @default(now())
+
+  @@unique([claimId, version])
+}
+
+model Adjustment {
+  id        String    @id @default(cuid())
+  lineId    String
+  line      ClaimLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  field     String // verifiedAmountSen
+  oldValue  String?
+  newValue  String?
+  reason    String
+  byId      String
+  byName    String
+  at        DateTime  @default(now())
+}
+
+model WorkflowEvent {
+  id         String       @id @default(cuid())
+  claimId    String
+  claim      Claim        @relation(fields: [claimId], references: [id])
+  fromStatus ClaimStatus?
+  toStatus   ClaimStatus
+  action     String // SUBMIT, RESUBMIT, FINANCE_VERIFY, RETURN, REJECT, DIRECTOR_APPROVE, ...
+  remarks    String?
+  actorId    String
+  actorName  String
+  actorRole  String
+  at         DateTime     @default(now())
+
+  @@index([claimId, at])
+}
+
+model PaymentBatch {
+  id          String      @id @default(cuid())
+  ref         String      @unique // PAY-2026-11-001
+  companyId   String
+  company     Company     @relation(fields: [companyId], references: [id])
+  paymentDate DateTime?   @db.Date
+  method      String? // INSTANT TRANSFER (OCBC) / TRANSFER WITH SALARY / PETTY CASH / CHEQUE
+  bankRef     String?
+  remarks     String?
+  proofDocKey String? // storage key of payment proof
+  proofDocName String?
+  proofDriveFileId String?
+  status      BatchStatus @default(DRAFT)
+  createdById String
+  createdAt   DateTime    @default(now())
+  postedById  String?
+  postedAt    DateTime?
+  items       PaymentItem[]
+}
+
+model PaymentItem {
+  id        String       @id @default(cuid())
+  batchId   String
+  batch     PaymentBatch @relation(fields: [batchId], references: [id])
+  claimId   String       @unique // a claim can be in only one batch => cannot be paid twice
+  claim     Claim        @relation(fields: [claimId], references: [id])
+  amountSen Int
+  paymentRef String? // per-staff transfer reference if different from batch
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  type      String
+  claimId   String?
+  claim     Claim?    @relation(fields: [claimId], references: [id])
+  title     String
+  body      String
+  link      String?
+  dedupeKey String?   @unique // prevents duplicate reminders
+  readAt    DateTime?
+  emailedAt DateTime?
+  emailError String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorName String?
+  entity    String
+  entityId  String
+  action    String
+  before    Json?
+  after     Json?
+  ip        String?
+  at        DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([at])
+}
+
+model SyncJob {
+  id          String    @id @default(cuid())
+  kind        String // ARCHIVE_CLAIM, SHEETS_SYNC_CLAIM, EMAIL, UPLOAD_PAYMENT_PROOF
+  dedupeKey   String?   @unique // only one queued job per key
+  payload     Json
+  status      JobStatus @default(QUEUED)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(8)
+  runAfter    DateTime  @default(now())
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAfter])
+}
+
+model DriveFolder {
+  // cache of folders created, so retries never create duplicates
+  path      String   @id // logical path e.g. "PBP/2026/11. NOV/PJ MIDTOWN/00011. NG ZHU ER/CLM-..."
+  folderId  String
+  createdAt DateTime @default(now())
+}
+
+model IdempotencyKey {
+  key       String   @id
+  userId    String
+  result    Json?
+  createdAt DateTime @default(now())
+}
+
+model GoogleCredential {
+  id                    String   @id @default("default")
+  email                 String
+  encryptedRefreshToken String
+  scopes                String
+  connectedAt           DateTime @default(now())
+  connectedById         String
+}

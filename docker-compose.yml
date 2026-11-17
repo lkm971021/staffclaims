@@ -1,0 +1,35 @@
+# Local / single-server deployment:  docker compose up -d --build
+# Then create the first admin:       docker compose exec web npm run create-admin  (with ADMIN_* env vars)
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: claims
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: claims
+      TZ: UTC
+    volumes: ["dbdata:/var/lib/postgresql/data"]
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://claims:${POSTGRES_PASSWORD}@db:5432/claims
+      STORAGE_DIR: /data/storage
+    ports: ["3000:3000"]
+    volumes: ["files:/data/storage"]
+    depends_on: [db]
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://claims:${POSTGRES_PASSWORD}@db:5432/claims
+      STORAGE_DIR: /data/storage
+    command: ["npm", "run", "worker"]
+    volumes: ["files:/data/storage"]
+    depends_on: [db, web]
+volumes:
+  dbdata:
+  files:

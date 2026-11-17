@@ -1,0 +1,8 @@
+node_modules
+.next
+storage
+mock-drive
+.test-storage
+.test-mock-drive
+.env
+.git

@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+storage/
+mock-drive/
+*.log
+test-results/
+playwright-report/
+.test-storage/
+.test-mock-drive/
