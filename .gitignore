@@ -12,3 +12,5 @@ playwright-report/
 .test-mock-drive/
 .test-mock-drive-ds/
 .test-storage-ds/
+.test-mock-drive-bk/
+.test-storage-bk/

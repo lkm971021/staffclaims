@@ -210,6 +210,20 @@ export async function resyncAllAction() {
   back("/admin/google", `Queued ${claims.length} claims for Drive archive and Sheet sync.`);
 }
 
+export async function backupNowAction() {
+  const u = await requireRole("ADMIN");
+  const { runDailyBackup } = await import("@/lib/backup");
+  let msg = "";
+  try {
+    const r = await runDailyBackup(true);
+    msg = "file" in r ? `Backup saved to Google Drive: ${r.file}` : `Backup skipped: ${r.skipped}`;
+    await audit(prisma, actor(u), "System", "backup", "BACKUP_NOW", undefined, r);
+  } catch (e) {
+    back("/admin/google", `Backup failed: ${(e as Error).message}`, false);
+  }
+  back("/admin/google", msg);
+}
+
 export async function disconnectGoogleAction() {
   const u = await requireRole("ADMIN");
   await prisma.googleCredential.deleteMany({});

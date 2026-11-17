@@ -4,13 +4,15 @@ import { AppShell } from "@/components/app-shell";
 import { PageTitle, Alert } from "@/components/ui";
 import { Flash } from "@/components/flash";
 import { googleConfigured, googleMode } from "@/lib/google/auth";
-import { disconnectGoogleAction, resyncAllAction, setCompanyDriveRootAction } from "@/app/actions/admin";
+import { backupNowAction, disconnectGoogleAction, resyncAllAction, setCompanyDriveRootAction } from "@/app/actions/admin";
+import { storageBackend } from "@/lib/storage";
 import { fmtDateTime } from "@/lib/time";
 
 export const metadata = { title: "Google Drive & Sheets" };
 
 export default async function GooglePage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const u = await requireRole("ADMIN");
+  const lastBackup = (await prisma.setting.findUnique({ where: { key: "lastBackup" } }))?.value as { at?: string; file?: string; sizeBytes?: number; mode?: string } | null;
   const [cred, mode, companies, sheet, archived, pending] = await Promise.all([
     prisma.googleCredential.findUnique({ where: { id: "default" } }),
     googleMode(),
@@ -38,6 +40,18 @@ export default async function GooglePage({ searchParams }: { searchParams: Promi
             <form action={resyncAllAction}><button className="btn-ghost btn-sm">Re-sync all claims to Drive & Sheets</button></form>
           </div>
           <div className="text-xs text-gray-500">Sign in with the Finance Google account that should own the claim files (e.g. the account that owns your accounting Drive). Archive status: {archived} archived · {pending} pending.</div>
+        </div>
+        <div className="card space-y-3 p-4 text-sm">
+          <div className="font-semibold">File storage &amp; database backups</div>
+          <div>
+            Uploaded files are stored {storageBackend() === "drive" ? <b>directly in Google Drive</b> : <b>on the server disk</b>} (STORAGE_BACKEND={storageBackend()}).
+            {storageBackend() === "drive" ? " A private “STAFF CLAIMS APP - FILE STORE” folder holds files until they are filed into each claim folder." : " Make sure the server disk is a persistent, backed-up volume."}
+          </div>
+          <div>
+            Daily database backup to the Drive folder “STAFF CLAIMS APP - DATABASE BACKUPS” (latest 35 kept):{" "}
+            {lastBackup?.at ? <b>last {fmtDateTime(new Date(lastBackup.at))} · {lastBackup.file} · {Math.round((lastBackup.sizeBytes ?? 0) / 1024)} KB{lastBackup.mode === "mock" ? " (MOCK)" : ""}</b> : <b className="text-amber-700">no backup yet</b>}
+          </div>
+          <form action={backupNowAction}><button className="btn-ghost btn-sm">Back up database now</button></form>
         </div>
         <div className="card space-y-3 p-4 text-sm">
           <div className="font-semibold">Master Claim Listing (Google Sheet)</div>

@@ -4,6 +4,7 @@ import { backoffMs } from "./jobs";
 import { archiveClaim, syncBatch, syncClaimToSheet } from "./archive";
 import { sendEmail } from "./email";
 import { runReminders } from "./reminders";
+import { runDailyBackup } from "./backup";
 
 /** Claim up to `limit` due jobs atomically (safe with several workers). */
 async function claimJobs(limit: number): Promise<SyncJob[]> {
@@ -77,6 +78,7 @@ export async function tick() {
   if (Date.now() - lastReminder > 60 * 60_000) {
     lastReminder = Date.now();
     await runReminders().catch((e) => console.error("[reminders]", e));
+    await runDailyBackup().catch((e) => console.error("[backup]", e));
   }
   return r;
 }
