@@ -33,12 +33,13 @@ const COMPANIES = [
   },
 ];
 
-// Template branch list, mapped to companies per the Petty Cash SOP.
+// Template branch list, mapped to companies per the Petty Cash SOP, plus SK ARENA (branch 5, holding).
 const BRANCHES = [
   { code: "MIDTOWN", name: "PJ MIDTOWN", company: "PBP", isAll: false },
   { code: "UPTOWN", name: "PJ UPTOWN", company: "PBP", isAll: false },
   { code: "PLANV", name: "PJ MIDTOWN (PLAN V)", company: "PBP", isAll: false },
   { code: "JBSUTERA", name: "JB SUTERA - PLAN B PHYSIO SOUTH", company: "PBPS", isAll: false },
+  { code: "SKARENA", name: "SK ARENA", company: "PBP", isAll: false }, // branch 5 (confirmed 17 Nov 2026)
   { code: "ALL", name: "ALL", company: "PBP", isAll: true },
 ];
 
@@ -119,7 +120,8 @@ async function main() {
     await prisma.branch.upsert({
       where: { code: b.code },
       update: {},
-      create: { code: b.code, name: b.name, companyId: cid(b.company), isAll: b.isAll, sortOrder: order++ },
+      // "ALL" (shared / HQ allocation) is always listed last
+      create: { code: b.code, name: b.name, companyId: cid(b.company), isAll: b.isAll, sortOrder: b.isAll ? 99 : order++ },
     });
   }
 
